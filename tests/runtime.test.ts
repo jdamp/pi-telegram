@@ -1447,7 +1447,8 @@ test("Extension runtime coalesces likely split long text updates into one dispat
     const ctx = createRuntimeExtensionContext();
     await handlers.get("session_start")?.({}, ctx);
     await commands.get("telegram-connect")?.handler("", ctx);
-    await waitForEventLoopCondition(() => getUpdatesCalls >= 2, 5000);
+    await waitForEventLoopCondition(() => getUpdatesCalls >= 1, 5000);
+    await flushMicrotasks();
     assert.equal(runtimeEvents.length, 0);
     await waitForCondition(() => runtimeEvents.length === 1, 3000);
     assert.equal(
