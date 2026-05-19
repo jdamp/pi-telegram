@@ -108,7 +108,7 @@ test("Status runtime updates the status bar and exposes bridge lines", () => {
     }),
     getBridgeStatusLineState: () => ({
       botUsername: "demo_bot",
-      allowedUserId: 7,
+      allowedChatIds: [7],
       lockState: "active here",
       pollingActive: true,
       lastUpdateId: 10,
@@ -128,7 +128,7 @@ test("Status runtime updates the status bar and exposes bridge lines", () => {
   assert.deepEqual(runtime.getStatusLines().slice(0, 3), [
     "connection:",
     "- bot: @demo_bot",
-    "- allowed user: 7",
+    "- allowed chats: 7",
   ]);
 });
 
@@ -144,7 +144,7 @@ test("Status runtime propagates status update failures to safety wrappers", () =
     }),
     getBridgeStatusLineState: () => ({
       botUsername: undefined,
-      allowedUserId: undefined,
+      allowedChatIds: [],
       pollingActive: false,
       lastUpdateId: undefined,
       pendingDispatch: false,
@@ -218,7 +218,7 @@ test("Bridge status runtime stays active while tools run after queue changes", (
     getConfig: () => ({
       botToken: "token",
       botUsername: "demo_bot",
-      allowedUserId: 7,
+      allowedChatIds: [7],
     }),
     isPollingActive: () => true,
     getActiveSourceMessageIds: () => undefined,
@@ -253,7 +253,7 @@ test("Bridge status runtime builds status state from live ports", () => {
     getConfig: () => ({
       botToken: "token",
       botUsername: "demo_bot",
-      allowedUserId: 7,
+      allowedChatIds: [7],
       lastUpdateId: 99,
     }),
     isPollingActive: () => true,
@@ -287,7 +287,7 @@ test("Bridge status runtime builds status state from live ports", () => {
   assert.deepEqual(runtime.getStatusLines(), [
     "connection:",
     "- bot: @demo_bot",
-    "- allowed user: 7",
+    "- allowed chats: 7",
     "- owner: active here",
     "",
     "polling:",
@@ -313,7 +313,7 @@ test("Bridge status runtime builds status state from live ports", () => {
 test("Bridge status lines include queue lanes and recent runtime events", () => {
   const lines = buildTelegramBridgeStatusLines({
     botUsername: "demo_bot",
-    allowedUserId: 42,
+    allowedChatIds: [42],
     pollingActive: true,
     lastUpdateId: 100,
     activeSourceMessageIds: [7, 8],
@@ -334,7 +334,7 @@ test("Bridge status lines include queue lanes and recent runtime events", () => 
   assert.deepEqual(lines, [
     "connection:",
     "- bot: @demo_bot",
-    "- allowed user: 42",
+    "- allowed chats: 42",
     "",
     "polling:",
     "- state: running",

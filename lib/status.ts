@@ -86,7 +86,7 @@ export interface TelegramRuntimeEventRecorderOptions {
 
 export interface TelegramBridgeStatusLineState {
   botUsername?: string;
-  allowedUserId?: number;
+  allowedChatIds: number[];
   lockState?: string;
   pollingActive: boolean;
   lastUpdateId?: number;
@@ -135,7 +135,7 @@ export interface TelegramStatusRuntimeDeps<
 export interface TelegramBridgeStatusConfig {
   botToken?: string;
   botUsername?: string;
-  allowedUserId?: number;
+  allowedChatIds?: number[];
   lastUpdateId?: number;
 }
 
@@ -351,7 +351,7 @@ export function createTelegramBridgeStatusRuntime<
       return {
         hasBotToken: !!config.botToken,
         pollingActive: deps.isPollingActive(),
-        paired: !!config.allowedUserId,
+        paired: !!(config.allowedChatIds?.length),
         compactionInProgress,
         processing:
           hasActiveTurn ||
@@ -374,7 +374,7 @@ export function createTelegramBridgeStatusRuntime<
       const config = deps.getConfig();
       return {
         botUsername: config.botUsername,
-        allowedUserId: config.allowedUserId,
+        allowedChatIds: config.allowedChatIds ?? [],
         lockState: deps.getRuntimeLockState?.(),
         pollingActive: deps.isPollingActive(),
         lastUpdateId: config.lastUpdateId,
@@ -452,7 +452,7 @@ export function buildTelegramBridgeStatusLines(
   return [
     "connection:",
     `- bot: ${state.botUsername ? `@${state.botUsername}` : "not configured"}`,
-    `- allowed user: ${state.allowedUserId ?? "not paired"}`,
+    `- allowed chats: ${state.allowedChatIds.length ? state.allowedChatIds.join(", ") : "not paired"}`,
     ...(state.lockState ? [`- owner: ${state.lockState}`] : []),
     "",
     "polling:",

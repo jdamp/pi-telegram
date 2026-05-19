@@ -91,7 +91,7 @@ export default function (pi: Pi.ExtensionAPI) {
   const proactivePushChatIdGetter =
     Config.createTelegramProactivePushChatIdGetter({
       getActiveTurnChatId: activeTurnRuntime.getChatId,
-      getAllowedUserId: configStore.getAllowedUserId,
+      getAllowedChatIds: configStore.getAllowedChatIds,
     });
   const buttonActionStore = OutboundHandlers.createTelegramButtonActionStore();
   const pendingModelSwitchStore =

@@ -44,9 +44,46 @@ export {
 
 export const TELEGRAM_PREFIX = "[telegram]";
 
+export interface TelegramTurnUser {
+  id: number;
+  is_bot: boolean;
+  first_name: string;
+  last_name?: string;
+  username?: string;
+}
+
 export interface TelegramTurnMessage {
   message_id: number;
+  date?: number;
   chat: { id: number };
+  from?: TelegramTurnUser;
+}
+
+export function formatTelegramSenderName(user: TelegramTurnUser): string {
+  const fullName = [user.first_name, user.last_name]
+    .filter(Boolean)
+    .join(" ");
+  if (user.username) return `${fullName} (@${user.username})`;
+  return fullName;
+}
+
+export function buildTelegramMessagePrefix(
+  message?: Pick<TelegramTurnMessage, "from" | "date">,
+): string {
+  if (!message) return TELEGRAM_PREFIX;
+  const parts: string[] = [];
+  if (message.from) {
+    parts.push(`from: ${formatTelegramSenderName(message.from)}`);
+  }
+  if (message.date) {
+    const ts = new Date(message.date * 1000)
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d+Z$/, "");
+    parts.push(`at: ${ts}`);
+  }
+  if (parts.length === 0) return TELEGRAM_PREFIX;
+  return `[telegram] (${parts.join(", ")})`;
 }
 
 export type DownloadedTelegramTurnFile = DownloadedTelegramMessageFile;
@@ -397,8 +434,9 @@ export function createTelegramPromptTurnRuntimeBuilder<
       deps.resolveTimeLine && chatId !== undefined
         ? deps.resolveTimeLine(chatId)
         : null;
+    const telegramPrefix = buildTelegramMessagePrefix(messages[0]);
     return buildTelegramPromptTurnRuntime({
-      telegramPrefix: TELEGRAM_PREFIX,
+      telegramPrefix,
       messages,
       historyTurns,
       queueOrder: deps.allocateQueueOrder(),

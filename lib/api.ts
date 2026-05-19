@@ -49,7 +49,14 @@ export interface TelegramUser {
   id: number;
   is_bot: boolean;
   first_name: string;
+  last_name?: string;
   username?: string;
+}
+
+export interface TelegramMessageEntity {
+  type: string;
+  offset: number;
+  length: number;
 }
 
 export interface TelegramChat {
@@ -103,11 +110,13 @@ export interface TelegramSticker {
 
 export interface TelegramMessage {
   message_id: number;
+  date?: number;
   chat: TelegramChat;
   from?: TelegramUser;
   text?: string;
   caption?: string;
   media_group_id?: string;
+  entities?: TelegramMessageEntity[];
   photo?: TelegramPhotoSize[];
   document?: TelegramDocument;
   video?: TelegramVideo;

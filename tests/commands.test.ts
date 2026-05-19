@@ -867,8 +867,8 @@ test("Command handler target runtime binds command targets into command handling
     openModelMenu: async () => {},
     openThinkingMenu: async () => {},
     openQueueMenu: async () => {},
-    getAllowedUserId: () => undefined,
-    setAllowedUserId: () => {},
+    getAllowedChatIds: () => undefined,
+    addAllowedChatId: () => {},
     setMyCommands: async () => {},
     persistConfig: async () => {},
     sendTextReply: async () => {},
@@ -883,7 +883,7 @@ test("Command handler target runtime binds command targets into command handling
 test("Command runtime routes commands through runtime ports", async () => {
   const events: string[] = [];
   const message = { chat: { id: 42 }, message_id: 99, from: { id: 7 } };
-  let allowedUserId: number | undefined;
+  let allowedChatIds: number[] = [];
   let compactComplete: (() => void) | undefined;
   const deps = {
     hasAbortHandler: () => true,
@@ -955,10 +955,10 @@ test("Command runtime routes commands through runtime ports", async () => {
     openQueueMenu: async (nextMessage: typeof message) => {
       events.push(`queue:${nextMessage.chat.id}`);
     },
-    getAllowedUserId: () => allowedUserId,
-    setAllowedUserId: (userId: number) => {
-      allowedUserId = userId;
-      events.push(`pair:${userId}`);
+    getAllowedChatIds: () => allowedChatIds,
+    addAllowedChatId: (chatId: number) => {
+      allowedChatIds = [...allowedChatIds, chatId];
+      events.push(`pair:${chatId}`);
     },
     registerBotCommands: async () => {
       events.push("register");
@@ -983,13 +983,13 @@ test("Command runtime routes commands through runtime ports", async () => {
   compactComplete?.();
   assert.equal(await handleCommand("stop", message, { idle: true }), true);
   assert.equal(await handleCommand("unknown", message, { idle: true }), false);
-  assert.equal(allowedUserId, 7);
+  assert.deepEqual(allowedChatIds, [42]);
   assert.deepEqual(events, [
     "show:42",
     "model:42",
     "thinking:42",
     "register",
-    "pair:7",
+    "pair:42",
     "persist",
     "status",
     "show:42",

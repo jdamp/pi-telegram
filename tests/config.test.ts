@@ -14,12 +14,12 @@ import {
   createTelegramConfigStore,
   createTelegramTimeInjectionModeGetter,
   createTelegramTimeInjectionModeSetter,
-  createTelegramUserPairingRuntime,
+  createTelegramChatPairingRuntime,
   createTelegramVoiceReplyModeConfiguredChecker,
   createTelegramVoiceReplyModeGetter,
   createTelegramVoiceReplyModeSetter,
   getTelegramAuthorizationState,
-  pairTelegramUserIfNeeded,
+  pairTelegramChatIfNeeded,
   readTelegramConfig,
   setGlobalTelegramConfigRuntime,
   updateTelegramVoiceConfig,
@@ -46,7 +46,7 @@ test("Telegram config helpers persist and reload config", async () => {
   const config = {
     botToken: "123:abc",
     botUsername: "demo_bot",
-    allowedUserId: 42,
+    allowedChatIds: [42],
   };
   await writeTelegramConfig(agentDir, configPath, config);
   const reloaded = await readTelegramConfig(configPath);
@@ -160,11 +160,11 @@ test("Telegram config store owns load, mutation, and persistence", async () => {
     attachmentHandlers: [{ mime: "audio/*", template: "transcribe {file}" }],
   });
   store.update((config) => {
-    config.allowedUserId = 42;
+    config.allowedChatIds = [42];
   });
   assert.equal(store.getBotToken(), "initial");
   assert.equal(store.hasBotToken(), true);
-  assert.equal(store.getAllowedUserId(), 42);
+  assert.deepEqual(store.getAllowedChatIds(), [42]);
   assert.deepEqual(store.getInboundHandlers(), [
     { type: "text", template: "translate" },
     { mime: "audio/*", template: "transcribe {file}" },
@@ -172,14 +172,14 @@ test("Telegram config store owns load, mutation, and persistence", async () => {
   assert.deepEqual(store.getAttachmentHandlers(), [
     { mime: "audio/*", template: "transcribe {file}" },
   ]);
-  store.setAllowedUserId(43);
-  assert.equal(store.getAllowedUserId(), 43);
+  store.addAllowedChatId(43);
+  assert.deepEqual(store.getAllowedChatIds(), [42, 43]);
   await store.persist();
   assert.deepEqual(await readTelegramConfig(configPath), {
     botToken: "initial",
     inboundHandlers: [{ type: "text", template: "translate" }],
     attachmentHandlers: [{ mime: "audio/*", template: "transcribe {file}" }],
-    allowedUserId: 43,
+    allowedChatIds: [42, 43],
   });
   store.set({ botToken: "next" });
   assert.deepEqual(store.get(), { botToken: "next" });
@@ -188,29 +188,30 @@ test("Telegram config store owns load, mutation, and persistence", async () => {
     botToken: "initial",
     inboundHandlers: [{ type: "text", template: "translate" }],
     attachmentHandlers: [{ mime: "audio/*", template: "transcribe {file}" }],
-    allowedUserId: 43,
+    allowedChatIds: [42, 43],
   });
 });
 
 test("Telegram config helpers classify authorization state for pair, allow, and deny", () => {
   assert.deepEqual(getTelegramAuthorizationState(10), {
     kind: "pair",
-    userId: 10,
+    chatId: 10,
   });
-  assert.deepEqual(getTelegramAuthorizationState(10, 10), { kind: "allow" });
-  assert.deepEqual(getTelegramAuthorizationState(10, 11), { kind: "deny" });
+  assert.deepEqual(getTelegramAuthorizationState(10, [10]), { kind: "allow" });
+  assert.deepEqual(getTelegramAuthorizationState(10, [11]), { kind: "deny" });
+  assert.deepEqual(getTelegramAuthorizationState(10, [11, 10]), { kind: "allow" });
 });
 
-test("Telegram config helpers pair only when no user is configured", async () => {
+test("Telegram config helpers pair only when no chat is configured", async () => {
   const events: string[] = [];
-  let allowedUserId: number | undefined;
+  let allowedChatIds: number[] | undefined;
   assert.equal(
-    await pairTelegramUserIfNeeded(10, {
-      allowedUserId,
+    await pairTelegramChatIfNeeded(10, {
+      allowedChatIds,
       ctx: "ctx",
-      setAllowedUserId: (userId) => {
-        allowedUserId = userId;
-        events.push(`set:${userId}`);
+      addAllowedChatId: (chatId) => {
+        allowedChatIds = [...(allowedChatIds ?? []), chatId];
+        events.push(`add:${chatId}`);
       },
       persistConfig: async () => {
         events.push("persist");
@@ -222,11 +223,11 @@ test("Telegram config helpers pair only when no user is configured", async () =>
     true,
   );
   assert.equal(
-    await pairTelegramUserIfNeeded(11, {
-      allowedUserId,
+    await pairTelegramChatIfNeeded(11, {
+      allowedChatIds,
       ctx: "ctx",
-      setAllowedUserId: () => {
-        events.push("unexpected:set");
+      addAllowedChatId: () => {
+        events.push("unexpected:add");
       },
       persistConfig: async () => {
         events.push("unexpected:persist");
@@ -237,15 +238,15 @@ test("Telegram config helpers pair only when no user is configured", async () =>
     }),
     false,
   );
-  assert.equal(allowedUserId, 10);
-  assert.deepEqual(events, ["set:10", "persist", "status:ctx"]);
+  assert.deepEqual(allowedChatIds, [10]);
+  assert.deepEqual(events, ["add:10", "persist", "status:ctx"]);
 });
 
 test("Telegram config pairing swallows only stale context status errors", async () => {
   await assert.doesNotReject(() =>
-    pairTelegramUserIfNeeded(10, {
+    pairTelegramChatIfNeeded(10, {
       ctx: "ctx",
-      setAllowedUserId: () => {},
+      addAllowedChatId: () => {},
       persistConfig: async () => {},
       updateStatus: () => {
         throw new Error("ctx is stale after session replacement");
@@ -254,9 +255,9 @@ test("Telegram config pairing swallows only stale context status errors", async 
   );
   await assert.rejects(
     () =>
-      pairTelegramUserIfNeeded(10, {
+      pairTelegramChatIfNeeded(10, {
         ctx: "ctx",
-        setAllowedUserId: () => {},
+        addAllowedChatId: () => {},
         persistConfig: async () => {},
         updateStatus: () => {
           throw new Error("status broke");
@@ -268,12 +269,12 @@ test("Telegram config pairing swallows only stale context status errors", async 
 
 test("Telegram config pairing runtime binds config and status ports", async () => {
   const events: string[] = [];
-  let allowedUserId: number | undefined;
-  const runtime = createTelegramUserPairingRuntime({
-    getAllowedUserId: () => allowedUserId,
-    setAllowedUserId: (userId) => {
-      allowedUserId = userId;
-      events.push(`set:${userId}`);
+  let allowedChatIds: number[] = [];
+  const runtime = createTelegramChatPairingRuntime({
+    getAllowedChatIds: () => allowedChatIds,
+    addAllowedChatId: (chatId) => {
+      allowedChatIds = [...allowedChatIds, chatId];
+      events.push(`add:${chatId}`);
     },
     persistConfig: async () => {
       events.push("persist");
@@ -284,7 +285,7 @@ test("Telegram config pairing runtime binds config and status ports", async () =
   });
   assert.equal(await runtime.pairIfNeeded(7, "ctx"), true);
   assert.equal(await runtime.pairIfNeeded(8, "ctx"), false);
-  assert.deepEqual(events, ["set:7", "persist", "status:ctx"]);
+  assert.deepEqual(events, ["add:7", "persist", "status:ctx"]);
 });
 
 test("Bot token input prefers stored config over env vars", () => {
@@ -363,7 +364,7 @@ test("Setup runtime prompts, validates token, persists config, and starts pollin
   const nextConfig = await runTelegramSetup({
     hasUI: true,
     env: { TELEGRAM_BOT_TOKEN: "env-token" },
-    config: { allowedUserId: 7 },
+    config: { allowedChatIds: [7] },
     promptInput: async () => {
       events.push("input");
       return undefined;
@@ -390,7 +391,7 @@ test("Setup runtime prompts, validates token, persists config, and starts pollin
     },
   });
   assert.deepEqual(nextConfig, {
-    allowedUserId: 7,
+    allowedChatIds: [7],
     botToken: "new-token",
     botId: 42,
     botUsername: "demo_bot",
@@ -434,7 +435,7 @@ test("Setup runtime reports invalid tokens without persisting", async () => {
 
 test("Setup prompt runtime guards concurrent setup and stores successful config", async () => {
   const events: string[] = [];
-  let config: TelegramConfig = { allowedUserId: 7 };
+  let config: TelegramConfig = { allowedChatIds: [7] };
   let inProgress = false;
   const promptForConfig = createTelegramSetupPromptRuntime({
     env: { TELEGRAM_BOT_TOKEN: "env-token" },
@@ -500,7 +501,7 @@ test("Setup prompt runtime guards concurrent setup and stores successful config"
     },
   });
   assert.deepEqual(config, {
-    allowedUserId: 7,
+    allowedChatIds: [7],
     botToken: "new-token",
     botId: 42,
     botUsername: "demo_bot",

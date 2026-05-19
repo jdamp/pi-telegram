@@ -39,7 +39,7 @@ export interface TelegramInboundRouteRuntimeDeps<
 > {
   configStore: Pick<
     TelegramConfigStore,
-    "get" | "getAllowedUserId" | "setAllowedUserId" | "persist"
+    "get" | "getAllowedChatIds" | "addAllowedChatId" | "persist"
   >;
   bridgeRuntime: TelegramBridgeRuntime;
   activeTurnRuntime: Queue.TelegramActiveTurnStore;
@@ -203,7 +203,7 @@ export function createTelegramInboundRouteRuntime<
     sendInteractiveMessage: deps.sendInteractiveMessage,
     deleteMessage: deps.deleteMessage,
     enqueueSectionPrompt: async (prompt: string, ctx: TContext) => {
-      const chatId = deps.configStore.getAllowedUserId();
+      const chatId = deps.configStore.getAllowedChatIds()[0];
       if (typeof chatId !== "number") return;
       const order = deps.bridgeRuntime.queue.allocateItemOrder();
       const turn: Queue.PendingTelegramTurn = {
@@ -366,8 +366,8 @@ export function createTelegramInboundRouteRuntime<
       return deps.openQueueMenu(chatId, message.message_id, ctx);
     },
     openSettingsMenu: deps.openSettingsMenu,
-    getAllowedUserId: deps.configStore.getAllowedUserId,
-    setAllowedUserId: deps.configStore.setAllowedUserId,
+    getAllowedChatIds: deps.configStore.getAllowedChatIds,
+    addAllowedChatId: deps.configStore.addAllowedChatId,
     setMyCommands: deps.setMyCommands,
     getPromptTemplateCommands,
     persistConfig: deps.configStore.persist,
@@ -525,8 +525,8 @@ export function createTelegramInboundRouteRuntime<
     deps.dispatchNextQueuedTelegramTurn(ctx);
   };
   return Updates.createTelegramPairedUpdateRuntime<TContext, TUpdate>({
-    getAllowedUserId: deps.configStore.getAllowedUserId,
-    setAllowedUserId: deps.configStore.setAllowedUserId,
+    getAllowedChatIds: deps.configStore.getAllowedChatIds,
+    addAllowedChatId: deps.configStore.addAllowedChatId,
     persistConfig: deps.configStore.persist,
     updateStatus: deps.updateStatus,
     removePendingMediaGroupMessages: deps.mediaGroupRuntime.removeMessages,
@@ -540,7 +540,10 @@ export function createTelegramInboundRouteRuntime<
     answerGuestQuery: deps.answerGuestQuery,
     handleAuthorizedTelegramCallbackQuery: callbackHandler,
     sendTextReply: deps.sendTextReply,
-    handleAuthorizedTelegramMessage: textDispatch.handleMessage,
+    handleAuthorizedTelegramMessage: (message, ctx) => {
+      if (!Updates.isTelegramBotAddressed(message, deps.configStore.get().botUsername)) return Promise.resolve();
+      return textDispatch.handleMessage(message, ctx);
+    },
     handleAuthorizedTelegramEditedMessage: editRuntime.updateFromEditedMessage,
     handleAuthorizedTelegramGuestMessage,
   });

@@ -4,7 +4,7 @@
  * Owns Telegram slash-command normalization, bot command metadata, and pi-side command registration behind runtime ports
  */
 
-import { pairTelegramUserIfNeeded } from "./config.ts";
+import { pairTelegramChatIfNeeded } from "./config.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "./pi.ts";
 import {
   createTelegramControlItemBuilder,
@@ -574,8 +574,8 @@ export interface TelegramCommandRuntimeDeps<
   openThinkingMenu: (message: TMessage, ctx: TContext) => Promise<void>;
   openQueueMenu: (message: TMessage, ctx: TContext) => Promise<void>;
   openSettingsMenu?: (message: TMessage, ctx: TContext) => Promise<void>;
-  getAllowedUserId: () => number | undefined;
-  setAllowedUserId: (userId: number) => void;
+  getAllowedChatIds: () => number[];
+  addAllowedChatId: (chatId: number) => void;
   registerBotCommands: () => Promise<void>;
   getPromptTemplateCommands?: () => readonly TelegramPromptTemplateMenuCommand[];
   persistConfig: () => Promise<void>;
@@ -984,8 +984,8 @@ export function createTelegramCommandHandlerTargetRuntime<
     openThinkingMenu: deps.openThinkingMenu,
     openQueueMenu: deps.openQueueMenu,
     openSettingsMenu: commandTargetRuntime.openSettingsMenu,
-    getAllowedUserId: deps.getAllowedUserId,
-    setAllowedUserId: deps.setAllowedUserId,
+    getAllowedChatIds: deps.getAllowedChatIds,
+    addAllowedChatId: deps.addAllowedChatId,
     registerBotCommands: createTelegramBotCommandRegistrar({
       setMyCommands: deps.setMyCommands,
     }),
@@ -1166,10 +1166,11 @@ async function handleTelegramCommandRuntime<
           );
         }
         if (nextMessage.from?.id !== undefined) {
-          await pairTelegramUserIfNeeded(nextMessage.from.id, {
-            allowedUserId: deps.getAllowedUserId(),
+          const chatId = (nextMessage as { chat?: { id?: number } }).chat?.id ?? nextMessage.from.id;
+          await pairTelegramChatIfNeeded(chatId, {
+            allowedChatIds: deps.getAllowedChatIds(),
             ctx: undefined,
-            setAllowedUserId: deps.setAllowedUserId,
+            addAllowedChatId: deps.addAllowedChatId,
             persistConfig: deps.persistConfig,
             updateStatus: updateStatusFor(commandCtx),
           });

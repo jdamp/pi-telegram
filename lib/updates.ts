@@ -5,10 +5,10 @@
  */
 
 import {
-  createTelegramUserPairingRuntime,
+  createTelegramChatPairingRuntime,
   getTelegramAuthorizationState,
   type TelegramAuthorizationState,
-  type TelegramUserPairingRuntimeDeps,
+  type TelegramChatPairingRuntimeDeps,
 } from "./config.ts";
 
 // --- Extraction ---
@@ -118,10 +118,18 @@ export interface TelegramChat {
   type: string;
 }
 
+export interface TelegramMessageEntity {
+  type: string;
+  offset: number;
+  length: number;
+}
+
 export interface TelegramUpdateMessage {
   chat: TelegramChat;
   from?: TelegramUser;
   message_id?: number;
+  text?: string;
+  entities?: TelegramMessageEntity[];
 }
 
 export interface TelegramCallbackQuery {
@@ -146,13 +154,37 @@ export interface TelegramUpdateRouting {
   guest_message?: TelegramGuestMessage;
 }
 
+export function isTelegramBotAddressed(
+  message: TelegramUpdateMessage,
+  botUsername?: string,
+): boolean {
+  if (message.chat.type === "private") return true;
+  if (!botUsername) return false;
+  const text = message.text ?? "";
+  const entities = message.entities ?? [];
+  for (const entity of entities) {
+    if (entity.type === "bot_command" || entity.type === "mention") {
+      const entityText = text
+        .slice(entity.offset, entity.offset + entity.length)
+        .toLowerCase();
+      if (
+        entityText === `@${botUsername.toLowerCase()}` ||
+        entityText.endsWith(`@${botUsername.toLowerCase()}`)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function getAuthorizedTelegramCallbackQuery(
   update: TelegramUpdateRouting,
 ): TelegramCallbackQuery | undefined {
   const query = update.callback_query;
   if (!query) return undefined;
   const message = query.message;
-  if (!message || message.chat.type !== "private" || query.from.is_bot) {
+  if (!message || query.from.is_bot) {
     return undefined;
   }
   return query;
@@ -164,7 +196,6 @@ export function getAuthorizedTelegramMessage(
   const message = update.message;
   if (
     !message ||
-    message.chat.type !== "private" ||
     !message.from ||
     message.from.is_bot
   ) {
@@ -179,7 +210,6 @@ export function getAuthorizedTelegramEditedMessage(
   const message = update.edited_message;
   if (
     !message ||
-    message.chat.type !== "private" ||
     !message.from ||
     message.from.is_bot
   ) {
@@ -248,7 +278,7 @@ export function buildTelegramUpdateFlowAction<
   TUpdate extends TelegramUpdateFlow,
 >(
   update: TUpdate,
-  allowedUserId?: number,
+  allowedChatIds?: number[],
 ): TelegramUpdateFlowAction<
   NonNullable<TUpdate["message_reaction"]>,
   NonNullable<TUpdate["callback_query"]>,
@@ -264,52 +294,47 @@ export function buildTelegramUpdateFlowAction<
   }
   const query = getAuthorizedTelegramCallbackQuery(update);
   if (query) {
+    const chatId =
+      (query.message?.chat?.id as number | undefined) ?? query.from.id;
     return {
       kind: "callback",
       query: query as NonNullable<TUpdate["callback_query"]>,
-      authorization: getTelegramAuthorizationState(
-        query.from.id,
-        allowedUserId,
-      ),
+      authorization: getTelegramAuthorizationState(chatId, allowedChatIds),
     };
   }
   const message = getAuthorizedTelegramMessage(update);
   if (message?.from) {
+    const chatId = (message.chat.id as number | undefined) ?? message.from.id;
     return {
       kind: "message",
       message: message as NonNullable<
         TUpdate["message"] | TUpdate["edited_message"]
       > & { from: TelegramUser },
-      authorization: getTelegramAuthorizationState(
-        message.from.id,
-        allowedUserId,
-      ),
+      authorization: getTelegramAuthorizationState(chatId, allowedChatIds),
     };
   }
   const editedMessage = getAuthorizedTelegramEditedMessage(update);
   if (editedMessage?.from) {
+    const chatId =
+      (editedMessage.chat.id as number | undefined) ?? editedMessage.from.id;
     return {
       kind: "edited-message",
       message: editedMessage as NonNullable<
         TUpdate["message"] | TUpdate["edited_message"]
       > & { from: TelegramUser },
-      authorization: getTelegramAuthorizationState(
-        editedMessage.from.id,
-        allowedUserId,
-      ),
+      authorization: getTelegramAuthorizationState(chatId, allowedChatIds),
     };
   }
   const guestMessage = getAuthorizedTelegramGuestMessage(update);
   if (guestMessage?.from) {
+    const chatId =
+      (guestMessage.chat.id as number | undefined) ?? guestMessage.from.id;
     return {
       kind: "guest",
       guestMessage: guestMessage as NonNullable<TUpdate["guest_message"]> & {
         from: TelegramUser;
       },
-      authorization: getTelegramAuthorizationState(
-        guestMessage.from.id,
-        allowedUserId,
-      ),
+      authorization: getTelegramAuthorizationState(chatId, allowedChatIds),
     };
   }
   return { kind: "ignore" };
@@ -415,14 +440,14 @@ export function buildTelegramUpdateExecutionPlanFromUpdate<
   TUpdate extends TelegramUpdateFlow,
 >(
   update: TUpdate,
-  allowedUserId?: number,
+  allowedChatIds?: number[],
 ): TelegramUpdateExecutionPlan<
   NonNullable<TUpdate["message_reaction"]>,
   NonNullable<TUpdate["callback_query"]>,
   NonNullable<TUpdate["message"] | TUpdate["edited_message"]>
 > {
   return buildTelegramUpdateExecutionPlan(
-    buildTelegramUpdateFlowAction(update, allowedUserId),
+    buildTelegramUpdateFlowAction(update, allowedChatIds),
   );
 }
 
@@ -445,7 +470,7 @@ export interface TelegramUpdateRuntimeDeps<
     reactionUpdate: TReactionUpdate,
     ctx: TContext,
   ) => Promise<void>;
-  pairTelegramUserIfNeeded: (userId: number, ctx: TContext) => Promise<boolean>;
+  pairTelegramChatIfNeeded: (chatId: number, ctx: TContext) => Promise<boolean>;
   answerCallbackQuery: (
     callbackQueryId: string,
     text?: string,
@@ -479,7 +504,7 @@ export interface TelegramUpdateRuntimeControllerDeps<
   TCallbackQuery extends TelegramCallbackQuery = TelegramCallbackQuery,
   TMessage extends TelegramUpdateMessage = TelegramUpdateMessage,
 > {
-  getAllowedUserId: () => number | undefined;
+  getAllowedChatIds: () => number[];
   removePendingMediaGroupMessages: (messageIds: number[]) => void;
   removeQueuedTelegramTurnsByMessageIds: (
     messageIds: number[],
@@ -494,7 +519,7 @@ export interface TelegramUpdateRuntimeControllerDeps<
     ctx: TContext,
     priorityEmoji?: string,
   ) => boolean;
-  pairTelegramUserIfNeeded: (userId: number, ctx: TContext) => Promise<boolean>;
+  pairTelegramChatIfNeeded: (chatId: number, ctx: TContext) => Promise<boolean>;
   answerCallbackQuery: (
     callbackQueryId: string,
     text?: string,
@@ -560,7 +585,7 @@ export async function executeTelegramUpdate<
   TContext = unknown,
 >(
   update: TUpdate,
-  allowedUserId: number | undefined,
+  allowedChatIds: number[] | undefined,
   deps: TelegramUpdateRuntimeDeps<
     TContext,
     NonNullable<TUpdate["message_reaction"]>,
@@ -569,7 +594,7 @@ export async function executeTelegramUpdate<
   >,
 ): Promise<void> {
   await executeTelegramUpdatePlan(
-    buildTelegramUpdateExecutionPlanFromUpdate(update, allowedUserId),
+    buildTelegramUpdateExecutionPlanFromUpdate(update, allowedChatIds),
     deps,
   );
 }
@@ -583,9 +608,9 @@ export type TelegramPairedUpdateRuntimeControllerDeps<
     NonNullable<TUpdate["callback_query"]>,
     NonNullable<TUpdate["message"] | TUpdate["edited_message"]>
   >,
-  "pairTelegramUserIfNeeded"
+  "pairTelegramChatIfNeeded"
 > &
-  TelegramUserPairingRuntimeDeps<TContext>;
+  TelegramChatPairingRuntimeDeps<TContext>;
 
 export function createTelegramPairedUpdateRuntime<
   TContext = unknown,
@@ -594,7 +619,7 @@ export function createTelegramPairedUpdateRuntime<
   deps: TelegramPairedUpdateRuntimeControllerDeps<TContext, TUpdate>,
 ): TelegramUpdateRuntimeController<TContext, TUpdate> {
   return createTelegramUpdateRuntime({
-    getAllowedUserId: deps.getAllowedUserId,
+    getAllowedChatIds: deps.getAllowedChatIds,
     removePendingMediaGroupMessages: deps.removePendingMediaGroupMessages,
     removeQueuedTelegramTurnsByMessageIds:
       deps.removeQueuedTelegramTurnsByMessageIds,
@@ -602,9 +627,9 @@ export function createTelegramPairedUpdateRuntime<
       deps.clearQueuedTelegramTurnPriorityByMessageId,
     prioritizeQueuedTelegramTurnByMessageId:
       deps.prioritizeQueuedTelegramTurnByMessageId,
-    pairTelegramUserIfNeeded: createTelegramUserPairingRuntime({
-      getAllowedUserId: deps.getAllowedUserId,
-      setAllowedUserId: deps.setAllowedUserId,
+    pairTelegramChatIfNeeded: createTelegramChatPairingRuntime({
+      getAllowedChatIds: deps.getAllowedChatIds,
+      addAllowedChatId: deps.addAllowedChatId,
       persistConfig: deps.persistConfig,
       updateStatus: deps.updateStatus,
     }).pairIfNeeded,
@@ -636,7 +661,7 @@ export function createTelegramUpdateRuntime<
     ctx: TContext,
   ): Promise<void> => {
     await handleAuthorizedTelegramReactionUpdate(reactionUpdate, {
-      allowedUserId: deps.getAllowedUserId(),
+      allowedChatIds: deps.getAllowedChatIds(),
       ctx,
       removePendingMediaGroupMessages: deps.removePendingMediaGroupMessages,
       removeQueuedTelegramTurnsByMessageIds:
@@ -650,13 +675,13 @@ export function createTelegramUpdateRuntime<
   return {
     handleAuthorizedReactionUpdate,
     handleUpdate: (update, ctx) =>
-      executeTelegramUpdate(update, deps.getAllowedUserId(), {
+      executeTelegramUpdate(update, deps.getAllowedChatIds(), {
         ctx,
         removePendingMediaGroupMessages: deps.removePendingMediaGroupMessages,
         removeQueuedTelegramTurnsByMessageIds:
           deps.removeQueuedTelegramTurnsByMessageIds,
         handleAuthorizedTelegramReactionUpdate: handleAuthorizedReactionUpdate,
-        pairTelegramUserIfNeeded: deps.pairTelegramUserIfNeeded,
+        pairTelegramChatIfNeeded: deps.pairTelegramChatIfNeeded,
         answerCallbackQuery: deps.answerCallbackQuery,
         answerGuestQuery: deps.answerGuestQuery,
         handleAuthorizedTelegramCallbackQuery:
@@ -672,7 +697,7 @@ export function createTelegramUpdateRuntime<
 }
 
 export interface AuthorizedTelegramReactionUpdateDeps<TContext> {
-  allowedUserId?: number;
+  allowedChatIds?: number[];
   ctx: TContext;
   removePendingMediaGroupMessages: (messageIds: number[]) => void;
   removeQueuedTelegramTurnsByMessageIds: (
@@ -696,10 +721,16 @@ export async function handleAuthorizedTelegramReactionUpdate<TContext>(
 ): Promise<void> {
   const reactionUser = reactionUpdate.user;
   if (
-    reactionUpdate.chat.type !== "private" ||
     !reactionUser ||
-    reactionUser.is_bot ||
-    reactionUser.id !== deps.allowedUserId
+    reactionUser.is_bot
+  ) {
+    return;
+  }
+  // Verify chat is in the allowed list
+  const chatId = reactionUpdate.chat.id ?? reactionUser.id;
+  if (
+    deps.allowedChatIds?.length &&
+    !deps.allowedChatIds.includes(chatId)
   ) {
     return;
   }
@@ -785,7 +816,10 @@ export async function executeTelegramUpdatePlan<
     }
     if (plan.kind === "callback") {
       if (plan.shouldPair) {
-        await deps.pairTelegramUserIfNeeded(plan.query.from.id, deps.ctx);
+        const chatId =
+          (plan.query.message?.chat?.id as number | undefined) ??
+          plan.query.from.id;
+        await deps.pairTelegramChatIfNeeded(chatId, deps.ctx);
       }
       if (plan.shouldDeny) {
         const callbackQueryId = getTelegramCallbackQueryId(plan.query);
@@ -817,7 +851,10 @@ export async function executeTelegramUpdatePlan<
       return;
     }
     const pairedNow = plan.shouldPair
-      ? await deps.pairTelegramUserIfNeeded(plan.message.from.id, deps.ctx)
+      ? await deps.pairTelegramChatIfNeeded(
+          (plan.message.chat.id as number | undefined) ?? plan.message.from.id,
+          deps.ctx,
+        )
       : false;
     const replyTarget = getTelegramMessageReplyTarget(plan.message);
     if (

@@ -679,7 +679,7 @@ test("Extension runtime polls, pairs, and dispatches an inbound Telegram turn in
     assert.equal(apiCalls.includes("sendChatAction"), true);
     const promptBlock = getRuntimeHarnessTextBlock(dispatchedContent);
     assert.equal(promptBlock.type, "text");
-    assert.match(promptBlock.text ?? "", /^\[telegram\] hello from telegram$/);
+    assert.match(promptBlock.text ?? "", /^\[telegram\] \(from: Test\) hello from telegram$/);
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
     restoreFetch();
@@ -751,7 +751,7 @@ test("Extension runtime finalizes a drafted preview into the final Telegram repl
     mock.timers.enable({ apis: ["setTimeout"] });
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -854,7 +854,7 @@ test("Extension runtime clears queued follow-ups after a Telegram stop", async (
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -932,7 +932,7 @@ test("Extension runtime clears queued follow-ups after a Telegram stop", async (
     );
     const promptText =
       getRuntimeHarnessTextBlock(sentMessages.at(-1)).text ?? "";
-    assert.equal(promptText, "[telegram] new request");
+    assert.equal(promptText, "[telegram] (from: Test) new request");
     assert.equal(promptText.includes("follow up"), false);
     assert.equal(
       sendTexts.includes("Aborted current turn. Cleared 1 queued turn."),
@@ -997,7 +997,7 @@ test("Extension runtime handles immediate status before queued prompt after agen
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1068,11 +1068,11 @@ test("Extension runtime handles immediate status before queued prompt after agen
       idleCtx,
     );
     await waitForCondition(() => runtimeEvents.length >= 3);
-    assert.equal(runtimeEvents[0], "dispatch:[telegram] first request");
+    assert.equal(runtimeEvents[0], "dispatch:[telegram] (from: Test) first request");
     assert.match(runtimeEvents[1] ?? "", /^send:<b>π Telegram<\/b>/);
     assert.equal(
       runtimeEvents[2],
-      "dispatch:[telegram] follow up after status",
+      "dispatch:[telegram] (from: Test) follow up after status",
     );
   } finally {
     if (shutdownCtx) await handlers.get("session_shutdown")?.({}, shutdownCtx);
@@ -1136,7 +1136,7 @@ test("Extension runtime opens immediate model menu before queued prompt after ag
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1207,9 +1207,9 @@ test("Extension runtime opens immediate model menu before queued prompt after ag
       idleCtx,
     );
     await waitForCondition(() => runtimeEvents.length >= 3);
-    assert.equal(runtimeEvents[0], "dispatch:[telegram] first request");
+    assert.equal(runtimeEvents[0], "dispatch:[telegram] (from: Test) first request");
     assert.equal(runtimeEvents[1], "send:<b>🤖 Choose a model:</b>");
-    assert.equal(runtimeEvents[2], "dispatch:[telegram] follow up after model");
+    assert.equal(runtimeEvents[2], "dispatch:[telegram] (from: Test) follow up after model");
     await handlers.get("session_shutdown")?.({}, idleCtx);
   } finally {
     restoreFetch();
@@ -1275,7 +1275,7 @@ test("Extension runtime keeps queued turns blocked until compaction completes", 
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1317,13 +1317,13 @@ test("Extension runtime keeps queued turns blocked until compaction completes", 
     await waitForCondition(() => getUpdatesCalls >= 3);
     assert.equal(
       runtimeEvents.some(
-        (event) => event === "dispatch:[telegram] follow up after compaction",
+        (event) => event === "dispatch:[telegram] (from: Test) follow up after compaction",
       ),
       false,
     );
     compactHooks?.onComplete();
     await waitForCondition(() =>
-      runtimeEvents.includes("dispatch:[telegram] follow up after compaction"),
+      runtimeEvents.includes("dispatch:[telegram] (from: Test) follow up after compaction"),
     );
     await waitForCondition(() =>
       runtimeEvents.includes("send:Compaction completed."),
@@ -1385,7 +1385,7 @@ test("Extension runtime blocks queued dispatch during observed auto-compaction",
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1426,12 +1426,12 @@ test("Extension runtime blocks queued dispatch during observed auto-compaction",
     );
     await new Promise((resolve) => setTimeout(resolve, 80));
     assert.equal(
-      runtimeEvents.includes("dispatch:[telegram] queued during active turn"),
+      runtimeEvents.includes("dispatch:[telegram] (from: Test) queued during active turn"),
       false,
     );
     await handlers.get("session_compact")?.({}, ctx);
     await waitForCondition(() =>
-      runtimeEvents.includes("dispatch:[telegram] queued during active turn"),
+      runtimeEvents.includes("dispatch:[telegram] (from: Test) queued during active turn"),
     );
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
@@ -1489,7 +1489,7 @@ test("Extension runtime coalesces media-group updates into one delayed dispatch"
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1501,7 +1501,7 @@ test("Extension runtime coalesces media-group updates into one delayed dispatch"
     await waitForCondition(() => runtimeEvents.length === 1, 3000);
     assert.equal(
       runtimeEvents[0],
-      "dispatch:[telegram] first caption\n\nsecond caption",
+      "dispatch:[telegram] (from: Test) first caption\n\nsecond caption",
     );
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
@@ -1557,7 +1557,7 @@ test("Extension runtime coalesces likely split long text updates into one dispat
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1570,7 +1570,7 @@ test("Extension runtime coalesces likely split long text updates into one dispat
     await waitForCondition(() => runtimeEvents.length === 1, 3000);
     assert.equal(
       runtimeEvents[0],
-      `dispatch:[telegram] ${"x".repeat(3600)}\n\ntail`,
+      `dispatch:[telegram] (from: Test) ${"x".repeat(3600)}\n\ntail`,
     );
     await handlers.get("session_shutdown")?.({}, ctx);
   } finally {
@@ -1616,7 +1616,7 @@ test("Extension runtime clears pending split-text dispatch on shutdown", async (
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1683,7 +1683,7 @@ test("Extension runtime applies reaction priority and removal before the next di
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1772,8 +1772,8 @@ test("Extension runtime applies reaction priority and removal before the next di
       idleCtx,
     );
     await waitForCondition(() => runtimeEvents.length === 2);
-    assert.equal(runtimeEvents[0], "dispatch:[telegram] first request");
-    assert.equal(runtimeEvents[1], "dispatch:[telegram] newer waiting");
+    assert.equal(runtimeEvents[0], "dispatch:[telegram] (from: Test) first request");
+    assert.equal(runtimeEvents[1], "dispatch:[telegram] (from: Test) newer waiting");
     await handlers.get("agent_start")?.({}, activeCtx);
     await handlers.get("agent_end")?.(
       {
@@ -1788,8 +1788,8 @@ test("Extension runtime applies reaction priority and removal before the next di
     );
     await flushMicrotasks();
     assert.deepEqual(runtimeEvents, [
-      "dispatch:[telegram] first request",
-      "dispatch:[telegram] newer waiting",
+      "dispatch:[telegram] (from: Test) first request",
+      "dispatch:[telegram] (from: Test) newer waiting",
     ]);
     await handlers.get("session_shutdown")?.({}, idleCtx);
   } finally {
@@ -1870,7 +1870,7 @@ test("Extension runtime applies idle model picks immediately and refreshes statu
     ];
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -1995,7 +1995,7 @@ test("Extension runtime switches model in flight and dispatches a continuation t
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -2028,8 +2028,12 @@ test("Extension runtime switches model in flight and dispatches a continuation t
     );
     await waitForCondition(() =>
       runtimeEvents.some(
-        (event) => event === "dispatch:[telegram] first request",
+        (event) => event === "dispatch:[telegram] (from: Test) first request",
       ),
+    );
+    assert.equal(
+      runtimeEvents.includes("dispatch:[telegram] (from: Test) first request"),
+      true,
     );
     idle = false;
     await handlers.get("agent_start")?.({}, ctx);
@@ -2077,7 +2081,7 @@ test("Extension runtime switches model in flight and dispatches a continuation t
       ),
     );
     assert.equal(
-      runtimeEvents.includes("dispatch:[telegram] first request"),
+      runtimeEvents.includes("dispatch:[telegram] (from: Test) first request"),
       true,
     );
     assert.equal(
@@ -2164,7 +2168,7 @@ test("Extension runtime delays model-switch abort until the active tool finishes
   try {
     await telegramConfig.write({
       botToken: "123:abc",
-      allowedUserId: 77,
+      allowedChatIds: [99],
       lastUpdateId: 0,
     });
     (await getRuntimeTelegramExtension())(pi);
@@ -2197,7 +2201,7 @@ test("Extension runtime delays model-switch abort until the active tool finishes
     );
     await waitForCondition(() =>
       runtimeEvents.some(
-        (event) => event === "dispatch:[telegram] first request",
+        (event) => event === "dispatch:[telegram] (from: Test) first request",
       ),
     );
     idle = false;

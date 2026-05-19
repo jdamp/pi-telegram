@@ -90,12 +90,12 @@ test("Update helpers extract deleted business-message ids only from Bot API shap
 
 test("Paired update runtime binds pairing ports into update routing", async () => {
   const events: string[] = [];
-  let allowedUserId: number | undefined;
+  let allowedChatIds: number[] = [];
   const runtime = createTelegramPairedUpdateRuntime({
-    getAllowedUserId: () => allowedUserId,
-    setAllowedUserId: (userId) => {
-      allowedUserId = userId;
-      events.push(`set:${userId}`);
+    getAllowedChatIds: () => allowedChatIds,
+    addAllowedChatId: (chatId) => {
+      allowedChatIds = [...allowedChatIds, chatId];
+      events.push(`add:${chatId}`);
     },
     persistConfig: async () => {
       events.push("persist");
@@ -127,19 +127,28 @@ test("Paired update runtime binds pairing ports into update routing", async () =
     "ctx",
   );
   assert.deepEqual(events, [
-    "set:42",
+    "add:1",
     "persist",
     "status:ctx",
     "message:ctx:10",
   ]);
 });
 
-test("Update routing extracts only private human callback queries", () => {
+test("Update routing extracts human callback queries (private and group)", () => {
   assert.equal(
     getAuthorizedTelegramCallbackQuery({
       callback_query: {
         from: { id: 1, is_bot: true },
         message: { chat: { type: "private" } },
+      },
+    }),
+    undefined,
+  );
+  // No message attached → ignored
+  assert.equal(
+    getAuthorizedTelegramCallbackQuery({
+      callback_query: {
+        from: { id: 1, is_bot: false },
       },
     }),
     undefined,
@@ -151,18 +160,35 @@ test("Update routing extracts only private human callback queries", () => {
     },
   });
   assert.ok(query);
+  // Group callbacks are also accepted
+  const groupQuery = getAuthorizedTelegramCallbackQuery({
+    callback_query: {
+      from: { id: 1, is_bot: false },
+      message: { chat: { type: "group" } },
+    },
+  });
+  assert.ok(groupQuery);
 });
 
-test("Update routing extracts private human messages and edited messages separately", () => {
+test("Update routing extracts human messages and edited messages from private and group chats", () => {
+  // Bot messages are always rejected
   assert.equal(
     getAuthorizedTelegramMessage({
       message: {
         chat: { type: "group" },
-        from: { id: 1, is_bot: false },
+        from: { id: 1, is_bot: true },
       },
     }),
     undefined,
   );
+  // Human group messages are accepted
+  const groupMessage = getAuthorizedTelegramMessage({
+    message: {
+      chat: { type: "group" },
+      from: { id: 1, is_bot: false },
+    },
+  });
+  assert.ok(groupMessage);
   const directMessage = getAuthorizedTelegramMessage({
     message: {
       chat: { type: "private" },
@@ -219,14 +245,15 @@ test("Update flow prioritizes deleted business-message handling over other updat
 });
 
 test("Update flow returns authorized callback, message, and edit actions", () => {
+  // Private chat: chat.id === from.id for authorization
   const callbackAction = buildTelegramUpdateFlowAction(
     {
       callback_query: {
         from: { id: 7, is_bot: false },
-        message: { chat: { type: "private" } },
+        message: { chat: { type: "private", id: 7 } },
       },
     },
-    7,
+    [7],
   );
   assert.equal(callbackAction.kind, "callback");
   assert.deepEqual(
@@ -235,6 +262,7 @@ test("Update flow returns authorized callback, message, and edit actions", () =>
       : undefined,
     { kind: "allow" },
   );
+  // No allowedChatIds → pair using chat.id (falls back to from.id when chat.id absent)
   const messageAction = buildTelegramUpdateFlowAction({
     message: {
       chat: { type: "private" },
@@ -244,7 +272,22 @@ test("Update flow returns authorized callback, message, and edit actions", () =>
   assert.equal(messageAction.kind, "message");
   assert.deepEqual(
     messageAction.kind === "message" ? messageAction.authorization : undefined,
-    { kind: "pair", userId: 9 },
+    { kind: "pair", chatId: 9 },
+  );
+  // Group chat uses chat.id for authorization
+  const groupAction = buildTelegramUpdateFlowAction(
+    {
+      message: {
+        chat: { type: "group", id: 100 },
+        from: { id: 9, is_bot: false },
+      },
+    },
+    [100],
+  );
+  assert.equal(groupAction.kind, "message");
+  assert.deepEqual(
+    groupAction.kind === "message" ? groupAction.authorization : undefined,
+    { kind: "allow" },
   );
   const editAction = buildTelegramUpdateFlowAction(
     {
@@ -253,7 +296,7 @@ test("Update flow returns authorized callback, message, and edit actions", () =>
         from: { id: 9, is_bot: false },
       },
     },
-    9,
+    [9],
   );
   assert.equal(editAction.kind, "edited-message");
 });
@@ -263,11 +306,11 @@ test("Update flow classifies guest messages with authorization", () => {
     {
       guest_message: {
         guest_query_id: "gq-1",
-        chat: { type: "supergroup" },
+        chat: { type: "supergroup", id: 5 },
         from: { id: 5, is_bot: false },
       },
     },
-    5,
+    [5],
   );
   assert.equal(guestAction.kind, "guest");
   assert.deepEqual(
@@ -278,11 +321,11 @@ test("Update flow classifies guest messages with authorization", () => {
     {
       guest_message: {
         guest_query_id: "gq-2",
-        chat: { type: "supergroup" },
+        chat: { type: "supergroup", id: 6 },
         from: { id: 6, is_bot: false },
       },
     },
-    5,
+    [5],
   );
   assert.equal(guestDeny.kind, "guest");
   assert.deepEqual(
@@ -335,7 +378,7 @@ test("Update execution plan maps callback and message authorization to side-effe
       chat: { type: "private" },
       from: { id: 2, is_bot: false },
     },
-    authorization: { kind: "pair", userId: 2 },
+    authorization: { kind: "pair", chatId: 2 },
   });
   assert.equal(messagePlan.kind, "message");
   assert.equal(messagePlan.shouldPair, true);
@@ -390,10 +433,10 @@ test("Update execution plan can be built directly from updates", () => {
     {
       callback_query: {
         from: { id: 4, is_bot: false },
-        message: { chat: { type: "private" } },
+        message: { chat: { type: "private", id: 4 } },
       },
     },
-    5,
+    [5],
   );
   assert.equal(plan.kind, "callback");
   assert.equal(plan.kind === "callback" ? plan.shouldDeny : false, true);
@@ -402,7 +445,7 @@ test("Update execution plan can be built directly from updates", () => {
 test("Update runtime controller binds update and reaction ports", async () => {
   const events: string[] = [];
   const runtime = createTelegramUpdateRuntime({
-    getAllowedUserId: () => 42,
+    getAllowedChatIds: () => [42],
     removePendingMediaGroupMessages: (messageIds) => {
       events.push(`media:${messageIds.join(",")}`);
     },
@@ -418,8 +461,8 @@ test("Update runtime controller binds update and reaction ports", async () => {
       events.push(`priority:${ctx}:${messageId}`);
       return true;
     },
-    pairTelegramUserIfNeeded: async (userId, ctx: string) => {
-      events.push(`pair:${ctx}:${userId}`);
+    pairTelegramChatIfNeeded: async (chatId, ctx: string) => {
+      events.push(`pair:${ctx}:${chatId}`);
       return true;
     },
     answerCallbackQuery: async (id, text) => {
@@ -455,7 +498,7 @@ test("Update runtime controller binds update and reaction ports", async () => {
   await runtime.handleUpdate(
     {
       message: {
-        chat: { id: 1, type: "private" },
+        chat: { id: 42, type: "private" },
         from: { id: 42, is_bot: false },
         message_id: 10,
       },
@@ -468,12 +511,12 @@ test("Update runtime controller binds update and reaction ports", async () => {
 test("Update runtime routes guest messages through guest handler", async () => {
   const events: string[] = [];
   const runtime = createTelegramUpdateRuntime({
-    getAllowedUserId: () => 42,
+    getAllowedChatIds: () => [42],
     removePendingMediaGroupMessages: () => {},
     removeQueuedTelegramTurnsByMessageIds: () => 0,
     clearQueuedTelegramTurnPriorityByMessageId: () => true,
     prioritizeQueuedTelegramTurnByMessageId: () => true,
-    pairTelegramUserIfNeeded: async () => false,
+    pairTelegramChatIfNeeded: async () => false,
     answerCallbackQuery: async () => {},
     answerGuestQuery: async () => {},
     handleAuthorizedTelegramCallbackQuery: async () => {},
@@ -491,7 +534,7 @@ test("Update runtime routes guest messages through guest handler", async () => {
     {
       guest_message: {
         guest_query_id: "gq-1",
-        chat: { type: "supergroup" },
+        chat: { type: "supergroup", id: 42 },
         from: { id: 42, is_bot: false },
       },
     },
@@ -503,12 +546,12 @@ test("Update runtime routes guest messages through guest handler", async () => {
 test("Update runtime answers guest query with access denied for unauthorized users", async () => {
   const events: string[] = [];
   const runtime = createTelegramUpdateRuntime({
-    getAllowedUserId: () => 42,
+    getAllowedChatIds: () => [42],
     removePendingMediaGroupMessages: () => {},
     removeQueuedTelegramTurnsByMessageIds: () => 0,
     clearQueuedTelegramTurnPriorityByMessageId: () => true,
     prioritizeQueuedTelegramTurnByMessageId: () => true,
-    pairTelegramUserIfNeeded: async () => false,
+    pairTelegramChatIfNeeded: async () => false,
     answerCallbackQuery: async () => {},
     answerGuestQuery: async (id, text) => {
       events.push(`guest-deny:${id}:${text ?? ""}`);
@@ -525,7 +568,7 @@ test("Update runtime answers guest query with access denied for unauthorized use
     {
       guest_message: {
         guest_query_id: "gq-deny",
-        chat: { type: "supergroup" },
+        chat: { type: "supergroup", id: 99 },
         from: { id: 99, is_bot: false },
       },
     },
@@ -537,7 +580,7 @@ test("Update runtime answers guest query with access denied for unauthorized use
 test("Update runtime handles authorized reaction priority and removal effects", async () => {
   const events: string[] = [];
   const deps = {
-    allowedUserId: 7,
+    allowedChatIds: [7],
     ctx: TEST_CONTEXT,
     removePendingMediaGroupMessages: (ids: number[]) => {
       events.push(`media:${ids.join(",")}`);
@@ -705,7 +748,7 @@ test("Update runtime executes delete and reaction plans through the right side e
       handleAuthorizedTelegramReactionUpdate: async () => {
         events.push("reaction");
       },
-      pairTelegramUserIfNeeded: async () => false,
+      pairTelegramChatIfNeeded: async () => false,
       answerCallbackQuery: async () => {},
       answerGuestQuery: async () => {},
       handleAuthorizedTelegramCallbackQuery: async () => {},
@@ -733,7 +776,7 @@ test("Update runtime can execute directly from raw updates", async () => {
       removePendingMediaGroupMessages: () => {},
       removeQueuedTelegramTurnsByMessageIds: () => 0,
       handleAuthorizedTelegramReactionUpdate: async () => {},
-      pairTelegramUserIfNeeded: async () => {
+      pairTelegramChatIfNeeded: async () => {
         events.push("pair");
         return true;
       },
@@ -765,7 +808,7 @@ test("Update runtime swallows only stale context execution errors", async () => 
     removePendingMediaGroupMessages: () => {},
     removeQueuedTelegramTurnsByMessageIds: () => 0,
     handleAuthorizedTelegramReactionUpdate: async () => {},
-    pairTelegramUserIfNeeded: async () => false,
+    pairTelegramChatIfNeeded: async () => false,
     answerCallbackQuery: async () => {},
     answerGuestQuery: async () => {},
     handleAuthorizedTelegramCallbackQuery: async () => {},
@@ -813,13 +856,13 @@ test("Update runtime routes edited messages without creating normal message turn
         from: { id: 7, is_bot: false },
       },
     },
-    7,
+    [10],
     {
       ctx: TEST_CONTEXT,
       removePendingMediaGroupMessages: () => {},
       removeQueuedTelegramTurnsByMessageIds: () => 0,
       handleAuthorizedTelegramReactionUpdate: async () => {},
-      pairTelegramUserIfNeeded: async () => false,
+      pairTelegramChatIfNeeded: async () => false,
       answerCallbackQuery: async () => {},
       answerGuestQuery: async () => {},
       handleAuthorizedTelegramCallbackQuery: async () => {},
@@ -853,8 +896,8 @@ test("Update runtime handles callback deny and message pair flows", async () => 
       removePendingMediaGroupMessages: () => {},
       removeQueuedTelegramTurnsByMessageIds: () => 0,
       handleAuthorizedTelegramReactionUpdate: async () => {},
-      pairTelegramUserIfNeeded: async (userId) => {
-        events.push(`pair:${userId}`);
+      pairTelegramChatIfNeeded: async (chatId) => {
+        events.push(`pair:${chatId}`);
         return true;
       },
       answerCallbackQuery: async (id, text) => {
@@ -893,7 +936,7 @@ test("Update runtime handles callback deny and message pair flows", async () => 
       removePendingMediaGroupMessages: () => {},
       removeQueuedTelegramTurnsByMessageIds: () => 0,
       handleAuthorizedTelegramReactionUpdate: async () => {},
-      pairTelegramUserIfNeeded: async () => true,
+      pairTelegramChatIfNeeded: async () => true,
       answerCallbackQuery: async () => {},
       answerGuestQuery: async () => {},
       handleAuthorizedTelegramCallbackQuery: async () => {},

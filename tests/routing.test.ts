@@ -105,8 +105,8 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
   >({
     configStore: {
       get: () => ({}),
-      getAllowedUserId: () => 7,
-      setAllowedUserId: () => undefined,
+      getAllowedChatIds: () => [100],
+      addAllowedChatId: () => undefined,
       persist: async () => undefined,
     },
     bridgeRuntime,
@@ -160,7 +160,7 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
       message: {
         message_id: 11,
         chat: { id: 100, type: "private" },
-        from: { id: 7, is_bot: false },
+        from: { id: 7, is_bot: false, first_name: "Test" },
         text: "hello from telegram",
       },
     },
@@ -171,7 +171,7 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
   assert.equal(queued?.statusSummary, "hello from telegram");
   assert.equal(
     queued?.content[0]?.type === "text" ? queued.content[0].text : "",
-    "[telegram] hello from telegram",
+    "[telegram] (from: Test) hello from telegram",
   );
   assert.deepEqual(events, ["status", "dispatch"]);
   await routeRuntime.handleUpdate(
@@ -193,7 +193,7 @@ test("Routing runtime forwards authorized text messages into prompt queueing", a
     continueTurn?.content[0]?.type === "text"
       ? continueTurn.content[0].text
       : "",
-    "[telegram] continue",
+    "[telegram] (from: ) continue",
   );
   assert.equal(originalTurn?.statusSummary, "hello from telegram");
   await routeRuntime.handleUpdate(

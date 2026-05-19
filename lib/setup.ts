@@ -8,7 +8,7 @@ export interface TelegramSetupConfig {
   botToken?: string;
   botId?: number;
   botUsername?: string;
-  allowedUserId?: number;
+  allowedChatIds?: number[];
   lastUpdateId?: number;
 }
 

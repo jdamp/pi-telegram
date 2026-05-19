@@ -52,7 +52,7 @@ export interface TelegramConfig {
   botToken?: string;
   botUsername?: string;
   botId?: number;
-  allowedUserId?: number;
+  allowedChatIds?: number[];
   lastUpdateId?: number;
   inboundHandlers?: TelegramInboundHandlerConfig[];
   attachmentHandlers?: TelegramInboundHandlerConfig[];
@@ -72,11 +72,11 @@ export interface TelegramConfigStore {
   update: (mutate: (config: TelegramConfig) => void) => void;
   getBotToken: () => string | undefined;
   hasBotToken: () => boolean;
-  getAllowedUserId: () => number | undefined;
+  getAllowedChatIds: () => number[];
   getInboundHandlers: () => TelegramInboundHandlerConfig[] | undefined;
   getAttachmentHandlers: () => TelegramInboundHandlerConfig[] | undefined;
   getOutboundHandlers: () => TelegramOutboundHandlerConfig[] | undefined;
-  setAllowedUserId: (userId: number) => void;
+  addAllowedChatId: (chatId: number) => void;
   load: () => Promise<void>;
   persist: (config?: TelegramConfig) => Promise<void>;
 }
@@ -150,15 +150,18 @@ export function createTelegramConfigStore(
     },
     getBotToken: () => config.botToken,
     hasBotToken: () => !!config.botToken,
-    getAllowedUserId: () => config.allowedUserId,
+    getAllowedChatIds: () => config.allowedChatIds ?? [],
     getInboundHandlers: () => [
       ...(config.inboundHandlers ?? []),
       ...(config.attachmentHandlers ?? []),
     ],
     getAttachmentHandlers: () => config.attachmentHandlers,
     getOutboundHandlers: () => config.outboundHandlers,
-    setAllowedUserId: (userId) => {
-      config.allowedUserId = userId;
+    addAllowedChatId: (chatId) => {
+      const ids = config.allowedChatIds ?? [];
+      if (!ids.includes(chatId)) {
+        config.allowedChatIds = [...ids, chatId];
+      }
     },
     load: async () => {
       config = await readTelegramConfig(configPath);
@@ -277,43 +280,43 @@ export function createTelegramTimeInjectionModeSetter(
 
 export function createTelegramProactivePushChatIdGetter(deps: {
   getActiveTurnChatId: () => number | undefined;
-  getAllowedUserId: () => number | undefined;
+  getAllowedChatIds: () => number[];
 }): () => number | undefined {
-  return () => deps.getActiveTurnChatId() ?? deps.getAllowedUserId();
+  return () => deps.getActiveTurnChatId() ?? deps.getAllowedChatIds()[0];
 }
 
 export type TelegramAuthorizationState =
-  | { kind: "pair"; userId: number }
+  | { kind: "pair"; chatId: number }
   | { kind: "allow" }
   | { kind: "deny" };
 
-export interface TelegramUserPairingDeps<TContext> {
-  allowedUserId?: number;
+export interface TelegramChatPairingDeps<TContext> {
+  allowedChatIds?: number[];
   ctx: TContext;
-  setAllowedUserId: (userId: number) => void;
+  addAllowedChatId: (chatId: number) => void;
   persistConfig: () => Promise<void>;
   updateStatus: (ctx: TContext) => void;
 }
 
-export interface TelegramUserPairingRuntimeDeps<TContext> {
-  getAllowedUserId: () => number | undefined;
-  setAllowedUserId: (userId: number) => void;
+export interface TelegramChatPairingRuntimeDeps<TContext> {
+  getAllowedChatIds: () => number[];
+  addAllowedChatId: (chatId: number) => void;
   persistConfig: () => Promise<void>;
   updateStatus: (ctx: TContext) => void;
 }
 
-export interface TelegramUserPairingRuntime<TContext> {
-  pairIfNeeded: (userId: number, ctx: TContext) => Promise<boolean>;
+export interface TelegramChatPairingRuntime<TContext> {
+  pairIfNeeded: (chatId: number, ctx: TContext) => Promise<boolean>;
 }
 
 export function getTelegramAuthorizationState(
-  userId: number,
-  allowedUserId?: number,
+  chatId: number,
+  allowedChatIds?: number[],
 ): TelegramAuthorizationState {
-  if (allowedUserId === undefined) {
-    return { kind: "pair", userId };
+  if (!allowedChatIds?.length) {
+    return { kind: "pair", chatId };
   }
-  if (userId === allowedUserId) {
+  if (allowedChatIds.includes(chatId)) {
     return { kind: "allow" };
   }
   return { kind: "deny" };
@@ -327,16 +330,16 @@ function isTelegramStaleContextError(error: unknown): boolean {
   );
 }
 
-export async function pairTelegramUserIfNeeded<TContext>(
-  userId: number,
-  deps: TelegramUserPairingDeps<TContext>,
+export async function pairTelegramChatIfNeeded<TContext>(
+  chatId: number,
+  deps: TelegramChatPairingDeps<TContext>,
 ): Promise<boolean> {
   const authorization = getTelegramAuthorizationState(
-    userId,
-    deps.allowedUserId,
+    chatId,
+    deps.allowedChatIds,
   );
   if (authorization.kind !== "pair") return false;
-  deps.setAllowedUserId(authorization.userId);
+  deps.addAllowedChatId(authorization.chatId);
   await deps.persistConfig();
   try {
     deps.updateStatus(deps.ctx);
@@ -346,15 +349,15 @@ export async function pairTelegramUserIfNeeded<TContext>(
   return true;
 }
 
-export function createTelegramUserPairingRuntime<TContext>(
-  deps: TelegramUserPairingRuntimeDeps<TContext>,
-): TelegramUserPairingRuntime<TContext> {
+export function createTelegramChatPairingRuntime<TContext>(
+  deps: TelegramChatPairingRuntimeDeps<TContext>,
+): TelegramChatPairingRuntime<TContext> {
   return {
-    pairIfNeeded: (userId, ctx) =>
-      pairTelegramUserIfNeeded(userId, {
-        allowedUserId: deps.getAllowedUserId(),
+    pairIfNeeded: (chatId, ctx) =>
+      pairTelegramChatIfNeeded(chatId, {
+        allowedChatIds: deps.getAllowedChatIds(),
         ctx,
-        setAllowedUserId: deps.setAllowedUserId,
+        addAllowedChatId: deps.addAllowedChatId,
         persistConfig: deps.persistConfig,
         updateStatus: deps.updateStatus,
       }),
